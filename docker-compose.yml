@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # FastAPI application
+  api:
+    build: .
+    container_name: simplecrawl-api
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:////app/data/simplecrawl.db
+      - MEDIA_STORAGE_DIR=/app/media
+      - LOG_LEVEL=INFO
+      - HEADLESS=true
+    depends_on:
+      - redis
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+      - ./media:/app/media
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # Celery worker for async jobs
+  worker:
+    build: .
+    container_name: simplecrawl-worker
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:////app/data/simplecrawl.db
+      - MEDIA_STORAGE_DIR=/app/media
+      - LOG_LEVEL=INFO
+      - HEADLESS=true
+    depends_on:
+      - redis
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+      - ./media:/app/media
+    restart: unless-stopped
+    command: celery -A app.workers.tasks worker --loglevel=info --concurrency=4
+
+  # Redis for queue and caching
+  redis:
+    image: redis:7-alpine
+    container_name: simplecrawl-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+volumes:
+  redis-data:

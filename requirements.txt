@@ -1,0 +1,50 @@
+# FastAPI and Web Server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Pydantic for validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Browser automation
+playwright==1.41.0
+
+# Redis and Celery for async jobs
+redis==5.0.1
+async-timeout==4.0.3
+celery==5.3.6
+
+# Database
+sqlalchemy==2.0.25
+
+# HTTP client
+httpx==0.26.0
+
+# HTML to Markdown
+markdownify==0.11.6
+html2text==2020.1.16
+
+# Document parsing
+pymupdf==1.23.8
+python-docx==1.1.0
+pillow==10.2.0
+
+# AI APIs
+openai==1.10.0
+anthropic==0.8.1
+
+# HTML parsing
+beautifulsoup4==4.12.3
+lxml==5.1.0
+
+# Rate limiting
+slowapi==0.1.9
+
+# Logging
+structlog==24.1.0
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0
