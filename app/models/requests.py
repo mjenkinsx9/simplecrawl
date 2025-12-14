@@ -3,7 +3,14 @@ Pydantic request models for API endpoints.
 """
 
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+# Maximum limits for input validation
+MAX_CRAWL_DEPTH = 50
+MAX_CRAWL_PAGES = 5000
+MAX_BATCH_URLS = 100
+MAX_EXTRACT_URLS = 50
+MAX_TIMEOUT_MS = 120000
 
 
 class ScrapeRequest(BaseModel):
@@ -28,7 +35,9 @@ class ScrapeRequest(BaseModel):
     )
     timeout: int = Field(
         default=30000,
-        description="Timeout in milliseconds"
+        ge=1000,
+        le=MAX_TIMEOUT_MS,
+        description=f"Timeout in milliseconds (1000-{MAX_TIMEOUT_MS})"
     )
 
 
@@ -44,15 +53,19 @@ class MapRequest(BaseModel):
 
 class CrawlRequest(BaseModel):
     """Request model for crawling a website."""
-    
+
     url: HttpUrl = Field(..., description="Starting URL to crawl")
     limit: int = Field(
         default=100,
-        description="Maximum number of pages to crawl"
+        ge=1,
+        le=MAX_CRAWL_PAGES,
+        description=f"Maximum number of pages to crawl (1-{MAX_CRAWL_PAGES})"
     )
     depth: int = Field(
         default=3,
-        description="Maximum crawl depth"
+        ge=1,
+        le=MAX_CRAWL_DEPTH,
+        description=f"Maximum crawl depth (1-{MAX_CRAWL_DEPTH})"
     )
     scrape_options: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -70,8 +83,13 @@ class CrawlRequest(BaseModel):
 
 class ExtractRequest(BaseModel):
     """Request model for AI-powered extraction."""
-    
-    urls: List[HttpUrl] = Field(..., description="URLs to extract data from")
+
+    urls: List[HttpUrl] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_EXTRACT_URLS,
+        description=f"URLs to extract data from (1-{MAX_EXTRACT_URLS})"
+    )
     schema: Optional[Dict[str, Any]] = Field(
         default=None,
         description="JSON schema for structured extraction"
@@ -84,8 +102,13 @@ class ExtractRequest(BaseModel):
 
 class BatchScrapeRequest(BaseModel):
     """Request model for batch scraping."""
-    
-    urls: List[HttpUrl] = Field(..., description="List of URLs to scrape")
+
+    urls: List[HttpUrl] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_BATCH_URLS,
+        description=f"List of URLs to scrape (1-{MAX_BATCH_URLS})"
+    )
     formats: List[str] = Field(
         default=["markdown"],
         description="Output formats for each URL"

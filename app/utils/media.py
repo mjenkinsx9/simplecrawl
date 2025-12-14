@@ -97,12 +97,12 @@ async def extract_media(page: Page, base_url: str, storage_dir: str) -> List[Dic
 async def download_media(client: httpx.AsyncClient, url: str, storage_dir: str) -> Optional[Dict[str, Any]]:
     """
     Download a media file.
-    
+
     Args:
         client: HTTP client
         url: Media URL
         storage_dir: Storage directory
-    
+
     Returns:
         Media file information or None if failed
     """
@@ -110,35 +110,51 @@ async def download_media(client: httpx.AsyncClient, url: str, storage_dir: str) 
         # Download file
         response = await client.get(url)
         response.raise_for_status()
-        
+
         # Check size
         content_length = len(response.content)
         if content_length > settings.max_media_size_bytes:
             logger.warning("media_too_large", url=url, size=content_length)
             return None
-        
+
         # Determine MIME type
         content_type = response.headers.get('content-type', '').split(';')[0].strip()
         if not content_type:
             content_type = mimetypes.guess_type(url)[0] or 'application/octet-stream'
-        
-        # Generate filename
+
+        # Generate safe filename using hash (prevents path traversal)
         url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
         ext = get_file_extension(url) or guess_extension(content_type) or 'bin'
+
+        # Sanitize extension to prevent path traversal via malicious extensions
+        ext = ext.replace('/', '').replace('\\', '').replace('..', '')[:10]
+
         filename = f"media_{url_hash}.{ext}"
-        filepath = os.path.join(storage_dir, filename)
-        
+
+        # Ensure storage directory exists and get its real path
+        os.makedirs(storage_dir, exist_ok=True)
+        real_storage_dir = os.path.realpath(storage_dir)
+
+        # Build filepath and verify it's within the storage directory
+        filepath = os.path.join(real_storage_dir, filename)
+        real_filepath = os.path.realpath(filepath)
+
+        # Security check: ensure the final path is within the storage directory
+        if not real_filepath.startswith(real_storage_dir + os.sep):
+            logger.warning("media_path_traversal_blocked", url=url, filepath=filepath)
+            return None
+
         # Save file
-        with open(filepath, 'wb') as f:
+        with open(real_filepath, 'wb') as f:
             f.write(response.content)
-        
+
         return {
             "url": url,
             "filename": filename,
             "type": content_type,
             "size": content_length
         }
-    
+
     except Exception as e:
         logger.error("media_download_error", url=url, error=str(e))
         return None

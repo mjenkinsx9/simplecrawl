@@ -5,7 +5,9 @@ Site mapping functionality for discovering URLs on a website.
 import asyncio
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
-import xml.etree.ElementTree as ET
+
+# Use defusedxml to prevent XXE attacks
+import defusedxml.ElementTree as ET
 
 import httpx
 from bs4 import BeautifulSoup

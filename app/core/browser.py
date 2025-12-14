@@ -3,13 +3,14 @@ Playwright browser pool management for efficient browser reuse.
 """
 
 import asyncio
-from typing import Optional
+from typing import Optional, Dict
 from contextlib import asynccontextmanager
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
 from app.config import settings
 from app.utils.logger import get_logger
+from app.core.proxy import get_proxy_pool, ProxyPool
 
 logger = get_logger(__name__)
 
@@ -17,12 +18,13 @@ logger = get_logger(__name__)
 class BrowserPool:
     """
     Manages a pool of Playwright browser contexts for efficient reuse.
+    Supports proxy rotation when configured.
     """
-    
+
     def __init__(self, pool_size: int = 5, headless: bool = True, user_agent: Optional[str] = None):
         """
         Initialize the browser pool.
-        
+
         Args:
             pool_size: Maximum number of browser contexts to maintain
             headless: Whether to run browsers in headless mode
@@ -31,26 +33,32 @@ class BrowserPool:
         self.pool_size = pool_size
         self.headless = headless
         self.user_agent = user_agent or settings.user_agent
-        
+
         self._playwright: Optional[Playwright] = None
         self._browser: Optional[Browser] = None
         self._contexts: list[BrowserContext] = []
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._proxy_pool: Optional[ProxyPool] = None
     
     async def initialize(self) -> None:
         """Initialize the browser pool."""
         if self._initialized:
             return
-        
+
         logger.info("browser_pool_initializing", pool_size=self.pool_size)
-        
+
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=self.headless,
             args=['--no-sandbox', '--disable-setuid-sandbox']
         )
-        
+
+        # Initialize proxy pool if configured
+        self._proxy_pool = get_proxy_pool()
+        if self._proxy_pool and self._proxy_pool.has_proxies:
+            logger.info("proxy_pool_attached", proxy_count=self._proxy_pool.proxy_count)
+
         self._initialized = True
         logger.info("browser_pool_initialized")
     
@@ -79,47 +87,79 @@ class BrowserPool:
         logger.info("browser_pool_closed")
     
     @asynccontextmanager
-    async def get_context(self):
+    async def get_context(self, use_proxy: bool = True):
         """
         Get a browser context from the pool.
-        
+
+        Args:
+            use_proxy: Whether to use proxy for this context (if available)
+
         Yields:
             BrowserContext: A Playwright browser context
         """
         if not self._initialized:
             await self.initialize()
-        
-        async with self._lock:
-            # Reuse existing context if available
-            if self._contexts:
-                context = self._contexts.pop()
-                logger.debug("context_reused", pool_size=len(self._contexts))
-            else:
-                # Create new context
-                context = await self._browser.new_context(
-                    user_agent=self.user_agent,
-                    viewport={'width': 1920, 'height': 1080}
-                )
-                logger.debug("context_created", pool_size=len(self._contexts))
-        
+
+        proxy = None
+        proxy_server = None
+
+        # Get proxy if enabled and requested
+        if use_proxy and self._proxy_pool and self._proxy_pool.has_proxies:
+            proxy = await self._proxy_pool.get_proxy()
+            if proxy:
+                proxy_server = proxy.get("server")
+                logger.debug("using_proxy", server=proxy_server)
+
+        # When using proxies, always create a new context (can't reuse with different proxy)
+        if proxy:
+            context = await self._browser.new_context(
+                user_agent=self.user_agent,
+                viewport={'width': 1920, 'height': 1080},
+                proxy=proxy
+            )
+            logger.debug("context_created_with_proxy", server=proxy_server)
+        else:
+            # No proxy - use pooled contexts
+            async with self._lock:
+                if self._contexts:
+                    context = self._contexts.pop()
+                    logger.debug("context_reused", pool_size=len(self._contexts))
+                else:
+                    context = await self._browser.new_context(
+                        user_agent=self.user_agent,
+                        viewport={'width': 1920, 'height': 1080}
+                    )
+                    logger.debug("context_created", pool_size=len(self._contexts))
+
         try:
             yield context
+        except Exception as e:
+            # Report proxy failure if we were using one
+            if proxy_server and self._proxy_pool:
+                await self._proxy_pool.report_failure(proxy_server)
+            raise
+        else:
+            # Report proxy success if we were using one
+            if proxy_server and self._proxy_pool:
+                await self._proxy_pool.report_success(proxy_server)
         finally:
-            # Return context to pool or close if pool is full
-            async with self._lock:
-                if len(self._contexts) < self.pool_size:
-                    # Clear cookies and storage before returning to pool
-                    try:
-                        await context.clear_cookies()
-                    except Exception:
-                        pass
-                    
-                    self._contexts.append(context)
-                    logger.debug("context_returned", pool_size=len(self._contexts))
-                else:
-                    # Pool is full, close the context
-                    await context.close()
-                    logger.debug("context_closed_pool_full", pool_size=len(self._contexts))
+            if proxy:
+                # Always close proxy contexts (can't reuse)
+                await context.close()
+                logger.debug("proxy_context_closed", server=proxy_server)
+            else:
+                # Return non-proxy context to pool
+                async with self._lock:
+                    if len(self._contexts) < self.pool_size:
+                        try:
+                            await context.clear_cookies()
+                        except Exception:
+                            pass
+                        self._contexts.append(context)
+                        logger.debug("context_returned", pool_size=len(self._contexts))
+                    else:
+                        await context.close()
+                        logger.debug("context_closed_pool_full", pool_size=len(self._contexts))
     
     @asynccontextmanager
     async def get_page(self):

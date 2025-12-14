@@ -13,11 +13,17 @@ from bs4 import BeautifulSoup
 from app.config import settings
 from app.core.browser import browser_pool
 from app.core.actions import execute_actions
-from app.utils.markdown import html_to_markdown
+from app.utils.markdown import html_to_markdown, html_to_markdown_smart
 from app.utils.media import extract_media
 from app.utils.logger import get_logger
+from app.utils.url_validator import validate_url
 
 logger = get_logger(__name__)
+
+
+class SSRFBlockedError(Exception):
+    """Raised when a URL is blocked due to SSRF protection."""
+    pass
 
 
 async def scrape_url(
@@ -42,9 +48,15 @@ async def scrape_url(
         Dictionary with scraped data
     """
     logger.info("scrape_started", url=url, formats=formats)
-    
+
+    # Validate URL to prevent SSRF attacks
+    is_valid, error = validate_url(url)
+    if not is_valid:
+        logger.warning("ssrf_blocked", url=url, reason=error)
+        raise SSRFBlockedError(f"URL blocked by SSRF protection: {error}")
+
     result = {}
-    
+
     try:
         async with browser_pool.get_page() as page:
             # Navigate to URL
@@ -60,11 +72,14 @@ async def scrape_url(
             
             # Get HTML content
             html_content = await page.content()
-            
-            # Extract markdown
+
+            # Extract markdown with smart extraction
             if "markdown" in formats:
-                result["markdown"] = html_to_markdown(html_content, exclude_tags)
-            
+                smart_result = html_to_markdown_smart(html_content, exclude_tags)
+                result["markdown"] = smart_result["markdown"]
+                result["quality_score"] = smart_result["quality_score"]
+                result["extraction_method"] = smart_result["method"]
+
             # Get raw HTML
             if "html" in formats:
                 result["html"] = html_content

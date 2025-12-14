@@ -2,12 +2,16 @@
 Page actions for interacting with pages before scraping.
 """
 
+import os
 from typing import Dict, Any, List
 from playwright.async_api import Page
 
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Safe directory for screenshot storage
+SCREENSHOT_BASE_DIR = "/tmp/simplecrawl_screenshots"
 
 
 async def execute_actions(page: Page, actions: List[Dict[str, Any]]) -> None:
@@ -183,13 +187,36 @@ async def execute_press(page: Page, action: Dict[str, Any]) -> None:
 async def execute_screenshot(page: Page, action: Dict[str, Any]) -> None:
     """
     Take a screenshot (for debugging).
-    
+
     Params:
-    - path: File path to save screenshot
+    - filename: Filename for the screenshot (will be saved in safe directory)
     - full_page: Capture full page (default: true)
+
+    Note: For security, screenshots are always saved in a designated safe directory.
+    User-provided paths are treated as filenames only.
     """
-    path = action.get("path", "/tmp/action_screenshot.png")
+    # Ensure screenshot directory exists
+    os.makedirs(SCREENSHOT_BASE_DIR, exist_ok=True)
+
+    # Extract just the filename (no path traversal)
+    user_path = action.get("path", "action_screenshot.png")
+    filename = os.path.basename(user_path)
+
+    # Ensure it has a valid extension
+    if not filename.endswith(('.png', '.jpg', '.jpeg')):
+        filename = f"{filename}.png"
+
+    # Build safe path
+    safe_path = os.path.join(SCREENSHOT_BASE_DIR, filename)
+
+    # Double-check the resolved path is within the safe directory
+    real_safe_path = os.path.realpath(safe_path)
+    real_base_dir = os.path.realpath(SCREENSHOT_BASE_DIR)
+    if not real_safe_path.startswith(real_base_dir + os.sep):
+        logger.warning("screenshot_path_traversal_blocked", requested=user_path)
+        raise ValueError("Invalid screenshot path")
+
     full_page = action.get("full_page", True)
-    
-    await page.screenshot(path=path, full_page=full_page)
-    logger.info("screenshot_saved", path=path)
+
+    await page.screenshot(path=safe_path, full_page=full_page)
+    logger.info("screenshot_saved", path=safe_path)

@@ -14,6 +14,7 @@ from app.config import settings
 from app.db.models import Monitor, get_session
 from app.core.scraper import scrape_url
 from app.utils.logger import get_logger
+from app.utils.url_validator import validate_webhook_url
 
 logger = get_logger(__name__)
 
@@ -109,13 +110,19 @@ async def send_webhook_notification(
 ) -> None:
     """
     Send webhook notification about content change.
-    
+
     Args:
         webhook_url: Webhook URL
         page_url: Page URL that changed
         old_hash: Previous content hash
         new_hash: New content hash
     """
+    # Validate webhook URL to prevent SSRF attacks
+    is_valid, error = validate_webhook_url(webhook_url)
+    if not is_valid:
+        logger.warning("webhook_ssrf_blocked", webhook_url=webhook_url, reason=error)
+        return
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             payload = {

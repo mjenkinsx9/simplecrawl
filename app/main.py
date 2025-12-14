@@ -6,14 +6,21 @@ Main FastAPI application entry point.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.utils.logger import configure_logging, get_logger
 from app.db.models import init_db
 from app.core.browser import browser_pool
-from app.api.routes import health, scrape, map, crawl, extract, batch, monitor
+from app.api.routes import health, scrape, map, crawl, extract, batch, monitor, search
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # Configure logging
 configure_logging(settings.log_level)
@@ -31,7 +38,9 @@ async def lifespan(app: FastAPI):
     # Initialize database
     try:
         init_db(settings.database_url)
-        logger.info("database_initialized", url=settings.database_url)
+        # Don't log the full database URL as it may contain credentials
+        db_type = settings.database_url.split(":")[0] if ":" in settings.database_url else "unknown"
+        logger.info("database_initialized", type=db_type)
     except Exception as e:
         logger.error("database_initialization_failed", error=str(e))
         raise
@@ -71,11 +80,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add rate limiter to app state and register exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Add CORS middleware
+# Note: allow_credentials=False when using allow_origins=["*"] for security
+# In production, specify explicit origins and set allow_credentials=True if needed
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -88,6 +103,7 @@ app.include_router(crawl.router, prefix="/v1", tags=["Crawling"])
 app.include_router(extract.router, prefix="/v1", tags=["Extraction"])
 app.include_router(batch.router, prefix="/v1", tags=["Batch"])
 app.include_router(monitor.router, prefix="/v1", tags=["Monitoring"])
+app.include_router(search.router, prefix="/v1", tags=["Search"])
 
 # Root endpoint
 @app.get("/")

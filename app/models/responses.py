@@ -18,13 +18,16 @@ class MediaItem(BaseModel):
 
 class ScrapeData(BaseModel):
     """Model for scraped page data."""
-    
+
     markdown: Optional[str] = None
     html: Optional[str] = None
     screenshot: Optional[str] = None
     links: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
     media: Optional[List[MediaItem]] = None
+    # Quality metadata from smart extraction
+    quality_score: Optional[float] = Field(None, description="Content quality score 0.0-1.0")
+    extraction_method: Optional[str] = Field(None, description="Method used: trafilatura or markdownify")
 
 
 class ScrapeResponse(BaseModel):
@@ -92,6 +95,27 @@ class MonitorResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
-    
+
     success: bool = Field(default=False)
     error: Dict[str, Any] = Field(..., description="Error details")
+
+
+class SearchResult(BaseModel):
+    """Model for a single search result."""
+
+    url: str = Field(..., description="URL of the search result")
+    title: Optional[str] = Field(None, description="Page title from search")
+    snippet: Optional[str] = Field(None, description="Search result snippet")
+    success: bool = Field(..., description="Whether scraping succeeded")
+    data: Optional[ScrapeData] = Field(None, description="Scraped content")
+    error: Optional[str] = Field(None, description="Error message if scraping failed")
+
+
+class SearchScrapeResponse(BaseModel):
+    """Response model for search+scrape endpoint."""
+
+    success: bool = Field(..., description="Whether the request succeeded")
+    query: str = Field(..., description="The search query used")
+    result_count: int = Field(..., description="Number of results returned")
+    results: Optional[List[SearchResult]] = Field(None, description="Search results with scraped content")
+    error: Optional[Dict[str, Any]] = None

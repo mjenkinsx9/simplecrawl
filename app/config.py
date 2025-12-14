@@ -39,10 +39,13 @@ class Settings(BaseSettings):
     proxy_url: Optional[str] = None
     proxy_list_file: Optional[str] = None
     proxy_rotation_enabled: bool = False
+    proxy_rotation_strategy: str = "round_robin"  # "round_robin" or "random"
+    proxy_max_failures: int = 3  # Failures before cooldown
+    proxy_cooldown_seconds: int = 300  # 5 minutes cooldown
     
     # Scraping limits
-    max_crawl_depth: int = 10
-    max_crawl_pages: int = 1000
+    max_crawl_depth: int = 50
+    max_crawl_pages: int = 5000
     max_concurrent_requests: int = 10
     job_retention_hours: int = 24
     request_timeout_seconds: int = 30
