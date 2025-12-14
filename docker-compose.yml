@@ -15,12 +15,24 @@ services:
       - MEDIA_STORAGE_DIR=/app/media
       - LOG_LEVEL=INFO
       - HEADLESS=true
+      # Crawl limits (increased for deep crawling)
+      - MAX_CRAWL_DEPTH=50
+      - MAX_CRAWL_PAGES=5000
+      # Proxy settings (uncomment and configure to enable)
+      # - PROXY_ROTATION_ENABLED=true
+      # - PROXY_URL=http://user:pass@proxy:8080
+      # - PROXY_LIST_FILE=/app/proxies.txt
+      # - PROXY_ROTATION_STRATEGY=round_robin
+      # - PROXY_MAX_FAILURES=3
+      # - PROXY_COOLDOWN_SECONDS=300
     depends_on:
       - redis
     volumes:
       - ./app:/app/app
       - ./data:/app/data
       - ./media:/app/media
+      # Mount proxy list file if using file-based proxies
+      # - ./proxies.txt:/app/proxies.txt:ro
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
@@ -34,12 +46,24 @@ services:
       - MEDIA_STORAGE_DIR=/app/media
       - LOG_LEVEL=INFO
       - HEADLESS=true
+      # Crawl limits (must match api service)
+      - MAX_CRAWL_DEPTH=50
+      - MAX_CRAWL_PAGES=5000
+      # Proxy settings (uncomment and configure to enable)
+      # - PROXY_ROTATION_ENABLED=true
+      # - PROXY_URL=http://user:pass@proxy:8080
+      # - PROXY_LIST_FILE=/app/proxies.txt
+      # - PROXY_ROTATION_STRATEGY=round_robin
+      # - PROXY_MAX_FAILURES=3
+      # - PROXY_COOLDOWN_SECONDS=300
     depends_on:
       - redis
     volumes:
       - ./app:/app/app
       - ./data:/app/data
       - ./media:/app/media
+      # Mount proxy list file if using file-based proxies
+      # - ./proxies.txt:/app/proxies.txt:ro
     restart: unless-stopped
     command: celery -A app.workers.tasks worker --loglevel=info --concurrency=4
 
