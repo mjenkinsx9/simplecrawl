@@ -50,7 +50,8 @@ async def scrape(request: Request, scrape_request: ScrapeRequest):
             exclude_tags=scrape_request.exclude_tags,
             wait_for_selector=scrape_request.wait_for_selector,
             timeout=scrape_request.timeout,
-            actions=scrape_request.actions
+            actions=scrape_request.actions,
+            wait_until=scrape_request.wait_until
         )
 
         return ScrapeResponse(

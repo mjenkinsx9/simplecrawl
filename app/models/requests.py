@@ -15,7 +15,7 @@ MAX_TIMEOUT_MS = 120000
 
 class ScrapeRequest(BaseModel):
     """Request model for scraping a single URL."""
-    
+
     url: HttpUrl = Field(..., description="URL to scrape")
     formats: List[str] = Field(
         default=["markdown"],
@@ -33,12 +33,24 @@ class ScrapeRequest(BaseModel):
         default=None,
         description="CSS selector to wait for before scraping"
     )
+    wait_until: str = Field(
+        default="domcontentloaded",
+        description="Page load strategy: domcontentloaded (fast), load, or networkidle (slow but complete)"
+    )
     timeout: int = Field(
         default=30000,
         ge=1000,
         le=MAX_TIMEOUT_MS,
         description=f"Timeout in milliseconds (1000-{MAX_TIMEOUT_MS})"
     )
+
+    @field_validator("wait_until")
+    @classmethod
+    def validate_wait_until(cls, v: str) -> str:
+        allowed = ["domcontentloaded", "load", "networkidle", "commit"]
+        if v not in allowed:
+            raise ValueError(f"wait_until must be one of: {', '.join(allowed)}")
+        return v
 
 
 class MapRequest(BaseModel):

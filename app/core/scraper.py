@@ -46,7 +46,8 @@ async def scrape_url(
     exclude_tags: Optional[List[str]] = None,
     wait_for_selector: Optional[str] = None,
     timeout: int = 30000,
-    actions: Optional[List[Dict[str, Any]]] = None
+    actions: Optional[List[Dict[str, Any]]] = None,
+    wait_until: str = "domcontentloaded"
 ) -> Dict[str, Any]:
     """
     Scrape a single URL and return data in requested formats.
@@ -60,6 +61,7 @@ async def scrape_url(
         wait_for_selector: CSS selector to wait for
         timeout: Timeout in milliseconds
         actions: Page actions to execute (only for web pages)
+        wait_until: Page load strategy - "domcontentloaded" (fast), "load", or "networkidle" (slow but complete)
 
     Returns:
         Dictionary with scraped data
@@ -92,8 +94,11 @@ async def scrape_url(
 
     try:
         async with browser_pool.get_page() as page:
-            # Navigate to URL
-            await page.goto(url, wait_until="networkidle", timeout=timeout)
+            # Navigate to URL with configurable wait strategy
+            # domcontentloaded: Fast, good for most sites
+            # load: Wait for load event
+            # networkidle: Slow but waits for all network activity to stop
+            await page.goto(url, wait_until=wait_until, timeout=timeout)
             
             # Wait for specific selector if provided
             if wait_for_selector:
