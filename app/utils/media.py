@@ -1,11 +1,19 @@
 """
 Media extraction and downloading utilities.
+
+Supports:
+- Standard <img src> tags
+- <picture> and <source> elements with srcset
+- Lazy-loaded images (data-src, data-srcset)
+- Next.js optimized images (/_next/image?url=...)
+- CSS background-image
 """
 
 import os
+import re
 import hashlib
-from typing import List, Dict, Any, Optional
-from urllib.parse import urljoin, urlparse
+from typing import List, Dict, Any, Optional, Set
+from urllib.parse import urljoin, urlparse, parse_qs, unquote
 import mimetypes
 
 import httpx
@@ -18,64 +26,165 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def extract_nextjs_image_url(url: str) -> Optional[str]:
+    """
+    Extract the original image URL from Next.js image optimization URLs.
+
+    Next.js uses: /_next/image?url=ENCODED_URL&w=WIDTH&q=QUALITY
+
+    Args:
+        url: Potentially a Next.js optimized image URL
+
+    Returns:
+        The original image URL, or None if not a Next.js URL
+    """
+    if '/_next/image' not in url:
+        return None
+
+    try:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+
+        if 'url' in params:
+            original_url = unquote(params['url'][0])
+            # If it's a relative URL, make it absolute using the base
+            if original_url.startswith('/'):
+                base = f"{parsed.scheme}://{parsed.netloc}"
+                return urljoin(base, original_url)
+            return original_url
+    except Exception:
+        pass
+
+    return None
+
+
+def extract_srcset_urls(srcset: str, base_url: str) -> List[str]:
+    """
+    Parse srcset attribute and extract all image URLs.
+
+    Srcset format: "url1 1x, url2 2x" or "url1 100w, url2 200w"
+
+    Args:
+        srcset: The srcset attribute value
+        base_url: Base URL for resolving relative URLs
+
+    Returns:
+        List of absolute URLs from the srcset
+    """
+    urls = []
+    for item in srcset.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        # URL is the first part before any space
+        url = item.split()[0]
+        if url:
+            urls.append(urljoin(base_url, url))
+    return urls
+
+
 async def extract_media(page: Page, base_url: str, storage_dir: str) -> List[Dict[str, Any]]:
     """
     Extract and download media files from a page.
-    
+
+    Handles:
+    - Standard <img src> and srcset
+    - Lazy-loaded images (data-src, data-srcset, data-lazy-src)
+    - Next.js optimized images (/_next/image?url=...)
+    - <picture> and <source> elements
+    - CSS background-image
+
     Args:
         page: Playwright page
         base_url: Base URL for resolving relative URLs
         storage_dir: Directory to save media files
-    
+
     Returns:
         List of media file information
     """
     logger.info("media_extraction_started", url=base_url)
-    
+
     # Get page HTML
     html = await page.content()
     soup = BeautifulSoup(html, 'lxml')
-    
-    # Extract image URLs
-    media_urls = []
-    
-    # From <img> tags
+
+    # Use a set to deduplicate as we go
+    media_urls: Set[str] = set()
+
+    def add_url(url: str):
+        """Add URL to set, handling Next.js optimization."""
+        if not url or url.startswith('data:'):
+            return
+
+        absolute_url = urljoin(base_url, url)
+
+        # Check if it's a Next.js optimized image and extract original
+        nextjs_url = extract_nextjs_image_url(absolute_url)
+        if nextjs_url:
+            media_urls.add(nextjs_url)
+            logger.debug("nextjs_image_extracted", original=nextjs_url)
+        else:
+            media_urls.add(absolute_url)
+
+    # From <img> tags - check multiple attributes
     for img in soup.find_all('img'):
-        src = img.get('src')
-        if src:
-            media_urls.append(urljoin(base_url, src))
-    
-    # From <picture> sources
+        # Standard src
+        if img.get('src'):
+            add_url(img.get('src'))
+
+        # Lazy loading attributes
+        for attr in ['data-src', 'data-lazy-src', 'data-original', 'data-lazy']:
+            if img.get(attr):
+                add_url(img.get(attr))
+
+        # Srcset (multiple resolutions)
+        for attr in ['srcset', 'data-srcset']:
+            if img.get(attr):
+                for url in extract_srcset_urls(img.get(attr), base_url):
+                    add_url(url)
+
+    # From <picture> and <source> elements
     for source in soup.find_all('source'):
-        srcset = source.get('srcset')
-        if srcset:
-            # Parse srcset (can contain multiple URLs)
-            for item in srcset.split(','):
-                url = item.strip().split()[0]
-                media_urls.append(urljoin(base_url, url))
-    
-    # From CSS background-image (basic extraction)
+        if source.get('src'):
+            add_url(source.get('src'))
+
+        for attr in ['srcset', 'data-srcset']:
+            if source.get(attr):
+                for url in extract_srcset_urls(source.get(attr), base_url):
+                    add_url(url)
+
+    # From <video> poster images
+    for video in soup.find_all('video'):
+        if video.get('poster'):
+            add_url(video.get('poster'))
+
+    # From CSS background-image (inline styles)
     for elem in soup.find_all(style=True):
         style = elem.get('style', '')
-        if 'background-image' in style:
-            # Extract URL from url(...)
-            import re
-            urls = re.findall(r'url\([\'"]?([^\'"]+)[\'"]?\)', style)
+        if 'url(' in style:
+            urls = re.findall(r'url\([\'"]?([^\'")\s]+)[\'"]?\)', style)
             for url in urls:
-                media_urls.append(urljoin(base_url, url))
-    
-    # Deduplicate
-    media_urls = list(set(media_urls))
-    
+                add_url(url)
+
+    # From <style> blocks
+    for style_tag in soup.find_all('style'):
+        if style_tag.string:
+            urls = re.findall(r'url\([\'"]?([^\'")\s]+)[\'"]?\)', style_tag.string)
+            for url in urls:
+                add_url(url)
+
+    # Convert set to list
+    media_urls_list = list(media_urls)
+
     # Filter by supported formats
     supported_formats = settings.media_formats_list
     filtered_urls = []
-    for url in media_urls:
+    for url in media_urls_list:
         ext = get_file_extension(url)
         if ext and ext.lower() in supported_formats:
             filtered_urls.append(url)
-    
-    logger.info("media_urls_found", count=len(filtered_urls))
+
+    logger.info("media_urls_found", total=len(media_urls_list), filtered=len(filtered_urls))
     
     # Download media files
     media_items = []

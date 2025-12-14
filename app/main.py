@@ -17,7 +17,7 @@ from app.config import settings
 from app.utils.logger import configure_logging, get_logger
 from app.db.models import init_db
 from app.core.browser import browser_pool
-from app.api.routes import health, scrape, map, crawl, extract, batch, monitor, search
+from app.api.routes import health, scrape, map, crawl, extract, batch, monitor, search, analyze
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -104,6 +104,7 @@ app.include_router(extract.router, prefix="/v1", tags=["Extraction"])
 app.include_router(batch.router, prefix="/v1", tags=["Batch"])
 app.include_router(monitor.router, prefix="/v1", tags=["Monitoring"])
 app.include_router(search.router, prefix="/v1", tags=["Search"])
+app.include_router(analyze.router, prefix="/v1", tags=["Analysis"])
 
 # Root endpoint
 @app.get("/")
