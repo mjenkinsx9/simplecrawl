@@ -16,18 +16,34 @@ class MediaItem(BaseModel):
     size: int = Field(..., description="File size in bytes")
 
 
+class DocumentImage(BaseModel):
+    """Model for images extracted from documents (PDF/DOCX)."""
+
+    page: Optional[int] = Field(None, description="Page number (for PDFs)")
+    index: Optional[int] = Field(None, description="Image index on page")
+    format: str = Field(..., description="Image format (png, jpeg, etc.)")
+    data: str = Field(..., description="Base64-encoded image data")
+    width: Optional[int] = Field(None, description="Image width in pixels")
+    height: Optional[int] = Field(None, description="Image height in pixels")
+    content_type: Optional[str] = Field(None, description="MIME content type")
+
+
 class ScrapeData(BaseModel):
-    """Model for scraped page data."""
+    """Model for scraped page data or parsed document."""
 
     markdown: Optional[str] = None
     html: Optional[str] = None
+    text: Optional[str] = Field(None, description="Plain text content (for documents)")
     screenshot: Optional[str] = None
     links: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
     media: Optional[List[MediaItem]] = None
     # Quality metadata from smart extraction
     quality_score: Optional[float] = Field(None, description="Content quality score 0.0-1.0")
-    extraction_method: Optional[str] = Field(None, description="Method used: trafilatura or markdownify")
+    extraction_method: Optional[str] = Field(None, description="Method used: trafilatura, markdownify, pdf_parser, or docx_parser")
+    # Document-specific fields
+    document_type: Optional[str] = Field(None, description="Document type if URL was a document: pdf, docx")
+    images: Optional[List[DocumentImage]] = Field(None, description="Images extracted from document")
 
 
 class ScrapeResponse(BaseModel):

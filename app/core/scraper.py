@@ -1,5 +1,7 @@
 """
 Core scraping functionality using Playwright.
+
+Also handles document parsing (PDF, DOCX) via direct download.
 """
 
 import asyncio
@@ -7,6 +9,7 @@ import base64
 from typing import Dict, Any, List, Optional
 from urllib.parse import urljoin, urlparse
 
+import httpx
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
 
@@ -17,12 +20,23 @@ from app.utils.markdown import html_to_markdown, html_to_markdown_smart
 from app.utils.media import extract_media
 from app.utils.logger import get_logger
 from app.utils.url_validator import validate_url
+from app.utils.documents import (
+    is_document_url,
+    parse_document_url,
+    DocumentParseError,
+    DOCUMENT_EXTENSIONS
+)
 
 logger = get_logger(__name__)
 
 
 class SSRFBlockedError(Exception):
     """Raised when a URL is blocked due to SSRF protection."""
+    pass
+
+
+class DocumentError(Exception):
+    """Raised when document parsing fails."""
     pass
 
 
@@ -36,14 +50,17 @@ async def scrape_url(
 ) -> Dict[str, Any]:
     """
     Scrape a single URL and return data in requested formats.
-    
+
+    Automatically detects and handles documents (PDF, DOCX) differently from web pages.
+
     Args:
         url: URL to scrape
         formats: List of output formats (markdown, html, screenshot, links, metadata, media)
         exclude_tags: HTML tags to exclude from markdown
         wait_for_selector: CSS selector to wait for
         timeout: Timeout in milliseconds
-    
+        actions: Page actions to execute (only for web pages)
+
     Returns:
         Dictionary with scraped data
     """
@@ -54,6 +71,22 @@ async def scrape_url(
     if not is_valid:
         logger.warning("ssrf_blocked", url=url, reason=error)
         raise SSRFBlockedError(f"URL blocked by SSRF protection: {error}")
+
+    # Check if URL is a document by extension first (fast path)
+    is_doc, doc_type = is_document_url(url)
+
+    # If not obvious from extension, do a HEAD request to check content-type
+    if not is_doc:
+        is_doc, doc_type = await _check_content_type(url, timeout)
+
+    # Handle documents differently - use direct parsing instead of browser
+    if is_doc:
+        logger.info("document_detected", url=url, type=doc_type)
+        try:
+            return await parse_document_url(url, formats, timeout)
+        except DocumentParseError as e:
+            logger.error("document_parse_failed", url=url, error=str(e))
+            raise DocumentError(f"Failed to parse document: {str(e)}")
 
     result = {}
 
@@ -245,5 +278,28 @@ async def _batch_scrape_async(urls: List[str], config: Dict[str, Any]) -> List[D
     
     tasks = [scrape_with_semaphore(url) for url in urls]
     results = await asyncio.gather(*tasks)
-    
+
     return results
+
+
+async def _check_content_type(url: str, timeout: int = 30000) -> tuple:
+    """
+    Check URL content-type via HEAD request to detect documents.
+
+    Args:
+        url: URL to check
+        timeout: Timeout in milliseconds
+
+    Returns:
+        Tuple of (is_document, document_type)
+    """
+    try:
+        timeout_seconds = timeout / 1000
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.head(url, follow_redirects=True)
+            content_type = response.headers.get('content-type', '')
+            return is_document_url(url, content_type)
+    except Exception as e:
+        # If HEAD request fails, just return False and let scraper try normally
+        logger.debug("content_type_check_failed", url=url, error=str(e))
+        return False, None

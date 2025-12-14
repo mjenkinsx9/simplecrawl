@@ -67,6 +67,25 @@ services:
     restart: unless-stopped
     command: celery -A app.workers.tasks worker --loglevel=info --concurrency=4
 
+  # Celery Beat scheduler for periodic tasks (monitoring, cleanup)
+  beat:
+    build: .
+    container_name: simplecrawl-beat
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:////app/data/simplecrawl.db
+      - LOG_LEVEL=INFO
+      # Job retention (hours) - jobs older than this are auto-cleaned
+      - JOB_RETENTION_HOURS=24
+    depends_on:
+      - redis
+      - worker
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+    restart: unless-stopped
+    command: celery -A app.workers.tasks beat --loglevel=info
+
   # Redis for queue and caching
   redis:
     image: redis:7-alpine
