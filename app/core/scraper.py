@@ -26,6 +26,10 @@ from app.utils.documents import (
     DocumentParseError,
     DOCUMENT_EXTENSIONS
 )
+from app.utils.flaresolverr import (
+    flaresolverr_client,
+    is_cloudflare_challenge,
+)
 
 logger = get_logger(__name__)
 
@@ -47,7 +51,8 @@ async def scrape_url(
     wait_for_selector: Optional[str] = None,
     timeout: int = 30000,
     actions: Optional[List[Dict[str, Any]]] = None,
-    wait_until: str = "domcontentloaded"
+    wait_until: str = "domcontentloaded",
+    headers: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
     Scrape a single URL and return data in requested formats.
@@ -62,6 +67,7 @@ async def scrape_url(
         timeout: Timeout in milliseconds
         actions: Page actions to execute (only for web pages)
         wait_until: Page load strategy - "domcontentloaded" (fast), "load", or "networkidle" (slow but complete)
+        headers: Custom HTTP headers (e.g., Authorization, Cookie) for authenticated requests
 
     Returns:
         Dictionary with scraped data
@@ -93,7 +99,7 @@ async def scrape_url(
     result = {}
 
     try:
-        async with browser_pool.get_page() as page:
+        async with browser_pool.get_page(extra_headers=headers) as page:
             # Navigate to URL with configurable wait strategy
             # domcontentloaded: Fast, good for most sites
             # load: Wait for load event
@@ -111,6 +117,36 @@ async def scrape_url(
             # Get HTML content
             html_content = await page.content()
 
+            # Track if we used FlareSolverr (affects how we extract links/metadata)
+            used_flaresolverr = False
+
+            # Check for Cloudflare challenge and retry with FlareSolverr if available
+            if is_cloudflare_challenge(html_content):
+                logger.info("cloudflare_detected", url=url)
+
+                if settings.flaresolverr_auto_fallback and flaresolverr_client.is_available:
+                    logger.info("flaresolverr_fallback", url=url)
+                    try:
+                        fs_result = await flaresolverr_client.get(url)
+                        if fs_result.get("status") == "ok":
+                            html_content = fs_result["solution"]["response"]
+                            used_flaresolverr = True
+                            logger.info("flaresolverr_bypass_success", url=url)
+                        else:
+                            logger.warning(
+                                "flaresolverr_bypass_failed",
+                                url=url,
+                                message=fs_result.get("message"),
+                            )
+                    except Exception as e:
+                        logger.error("flaresolverr_error", url=url, error=str(e))
+                else:
+                    logger.warning(
+                        "cloudflare_no_fallback",
+                        url=url,
+                        message="FlareSolverr not available for bypass",
+                    )
+
             # Extract markdown with smart extraction
             if "markdown" in formats:
                 smart_result = html_to_markdown_smart(html_content, exclude_tags)
@@ -127,13 +163,19 @@ async def scrape_url(
                 screenshot_bytes = await page.screenshot(full_page=True, type="png")
                 result["screenshot"] = base64.b64encode(screenshot_bytes).decode()
             
-            # Extract links
+            # Extract links (use HTML parsing if FlareSolverr was used)
             if "links" in formats:
-                result["links"] = await extract_links(page, url)
-            
-            # Extract metadata
+                if used_flaresolverr:
+                    result["links"] = extract_links_from_html(html_content, url)
+                else:
+                    result["links"] = await extract_links(page, url)
+
+            # Extract metadata (use HTML parsing if FlareSolverr was used)
             if "metadata" in formats:
-                result["metadata"] = await extract_metadata(page, url)
+                if used_flaresolverr:
+                    result["metadata"] = extract_metadata_from_html(html_content, url)
+                else:
+                    result["metadata"] = await extract_metadata(page, url)
             
             # Extract media
             if "media" in formats:
@@ -224,8 +266,80 @@ async def extract_metadata(page: Page, url: str) -> Dict[str, Any]:
     # Add source URL and status code
     metadata["sourceURL"] = url
     metadata["statusCode"] = 200  # If we got here, it's 200
-    
+
     return metadata
+
+
+def extract_links_from_html(html: str, base_url: str) -> List[str]:
+    """
+    Extract all links from HTML content (used for FlareSolverr responses).
+
+    Args:
+        html: HTML content
+        base_url: Base URL for resolving relative links
+
+    Returns:
+        List of absolute URLs
+    """
+    soup = BeautifulSoup(html, "lxml")
+    links = []
+    seen = set()
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "")
+        if not href or href.startswith("#") or href.startswith("javascript:"):
+            continue
+
+        absolute_url = urljoin(base_url, href)
+        if absolute_url not in seen:
+            seen.add(absolute_url)
+            links.append(absolute_url)
+
+    return links
+
+
+def extract_metadata_from_html(html: str, url: str) -> Dict[str, Any]:
+    """
+    Extract metadata from HTML content (used for FlareSolverr responses).
+
+    Args:
+        html: HTML content
+        url: Page URL
+
+    Returns:
+        Dictionary with metadata
+    """
+    soup = BeautifulSoup(html, "lxml")
+
+    def get_meta(name: str) -> Optional[str]:
+        """Get meta tag content by name or property."""
+        meta = soup.find("meta", attrs={"name": name}) or soup.find(
+            "meta", attrs={"property": name}
+        )
+        return meta.get("content") if meta else None
+
+    title_tag = soup.find("title")
+    html_tag = soup.find("html")
+
+    return {
+        "title": title_tag.get_text() if title_tag else None,
+        "description": get_meta("description") or get_meta("og:description"),
+        "language": html_tag.get("lang", "en") if html_tag else "en",
+        "keywords": get_meta("keywords"),
+        "author": get_meta("author"),
+        "ogTitle": get_meta("og:title"),
+        "ogDescription": get_meta("og:description"),
+        "ogImage": get_meta("og:image"),
+        "ogUrl": get_meta("og:url"),
+        "ogType": get_meta("og:type"),
+        "ogSiteName": get_meta("og:site_name"),
+        "twitterCard": get_meta("twitter:card"),
+        "twitterTitle": get_meta("twitter:title"),
+        "twitterDescription": get_meta("twitter:description"),
+        "twitterImage": get_meta("twitter:image"),
+        "sourceURL": url,
+        "statusCode": 200,
+    }
 
 
 def batch_scrape_urls(job_id: str, urls: List[str], config: Dict[str, Any]) -> Dict[str, Any]:

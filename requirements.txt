@@ -42,6 +42,9 @@ pillow==10.2.0
 openai==1.10.0
 anthropic==0.8.1
 
+# Schema validation
+jsonschema==4.21.1
+
 # HTML/XML parsing
 beautifulsoup4==4.12.3
 lxml==5.1.0

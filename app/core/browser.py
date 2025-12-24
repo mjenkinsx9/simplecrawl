@@ -87,12 +87,13 @@ class BrowserPool:
         logger.info("browser_pool_closed")
     
     @asynccontextmanager
-    async def get_context(self, use_proxy: bool = True):
+    async def get_context(self, use_proxy: bool = True, extra_headers: Optional[Dict[str, str]] = None):
         """
         Get a browser context from the pool.
 
         Args:
             use_proxy: Whether to use proxy for this context (if available)
+            extra_headers: Custom HTTP headers (e.g., Authorization, Cookie)
 
         Yields:
             BrowserContext: A Playwright browser context
@@ -110,16 +111,22 @@ class BrowserPool:
                 proxy_server = proxy.get("server")
                 logger.debug("using_proxy", server=proxy_server)
 
-        # When using proxies, always create a new context (can't reuse with different proxy)
-        if proxy:
-            context = await self._browser.new_context(
-                user_agent=self.user_agent,
-                viewport={'width': 1920, 'height': 1080},
-                proxy=proxy
-            )
-            logger.debug("context_created_with_proxy", server=proxy_server)
+        # When using proxies or custom headers, always create a new context (can't reuse)
+        if proxy or extra_headers:
+            context_opts = {
+                "user_agent": self.user_agent,
+                "viewport": {'width': 1920, 'height': 1080},
+            }
+            if proxy:
+                context_opts["proxy"] = proxy
+            if extra_headers:
+                context_opts["extra_http_headers"] = extra_headers
+                logger.debug("using_custom_headers", header_count=len(extra_headers))
+
+            context = await self._browser.new_context(**context_opts)
+            logger.debug("context_created_with_options", proxy=bool(proxy), headers=bool(extra_headers))
         else:
-            # No proxy - use pooled contexts
+            # No proxy or headers - use pooled contexts
             async with self._lock:
                 if self._contexts:
                     context = self._contexts.pop()
@@ -143,12 +150,12 @@ class BrowserPool:
             if proxy_server and self._proxy_pool:
                 await self._proxy_pool.report_success(proxy_server)
         finally:
-            if proxy:
-                # Always close proxy contexts (can't reuse)
+            if proxy or extra_headers:
+                # Always close contexts with proxy or custom headers (can't reuse)
                 await context.close()
-                logger.debug("proxy_context_closed", server=proxy_server)
+                logger.debug("custom_context_closed", proxy=bool(proxy), headers=bool(extra_headers))
             else:
-                # Return non-proxy context to pool
+                # Return standard context to pool
                 async with self._lock:
                     if len(self._contexts) < self.pool_size:
                         try:
@@ -162,14 +169,17 @@ class BrowserPool:
                         logger.debug("context_closed_pool_full", pool_size=len(self._contexts))
     
     @asynccontextmanager
-    async def get_page(self):
+    async def get_page(self, extra_headers: Optional[Dict[str, str]] = None):
         """
         Get a new page from a browser context.
-        
+
+        Args:
+            extra_headers: Custom HTTP headers for this page
+
         Yields:
             Page: A Playwright page
         """
-        async with self.get_context() as context:
+        async with self.get_context(extra_headers=extra_headers) as context:
             page = await context.new_page()
             try:
                 yield page

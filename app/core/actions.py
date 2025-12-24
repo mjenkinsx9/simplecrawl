@@ -17,22 +17,22 @@ SCREENSHOT_BASE_DIR = "/tmp/simplecrawl_screenshots"
 async def execute_actions(page: Page, actions: List[Dict[str, Any]]) -> None:
     """
     Execute a sequence of actions on a page.
-    
+
     Args:
         page: Playwright page
         actions: List of action dictionaries
-    
+
     Supported actions:
     - wait: Wait for time or selector
     - click: Click an element
     - scroll: Scroll the page
-    - type: Type text into an input
+    - type/write: Type text into an input (Firecrawl uses "write", we support both)
     - press: Press a key
     - screenshot: Take a screenshot
     """
     for i, action in enumerate(actions):
         action_type = action.get("type")
-        
+
         try:
             if action_type == "wait":
                 await execute_wait(page, action)
@@ -40,7 +40,7 @@ async def execute_actions(page: Page, actions: List[Dict[str, Any]]) -> None:
                 await execute_click(page, action)
             elif action_type == "scroll":
                 await execute_scroll(page, action)
-            elif action_type == "type":
+            elif action_type in ("type", "write"):  # "write" is Firecrawl's name for "type"
                 await execute_type(page, action)
             elif action_type == "press":
                 await execute_press(page, action)
@@ -142,13 +142,17 @@ async def execute_scroll(page: Page, action: Dict[str, Any]) -> None:
 
 async def execute_type(page: Page, action: Dict[str, Any]) -> None:
     """
-    Type text into an input.
-    
+    Type text into an input (also available as "write" for Firecrawl compatibility).
+
     Params:
     - selector: CSS selector of input element
     - text: Text to type
     - delay: Delay between key presses in ms
     - clear: Clear existing text first
+
+    Example actions:
+    - {"type": "write", "selector": "#search", "text": "hello"}
+    - {"type": "type", "selector": "input[name='q']", "text": "query", "clear": true}
     """
     selector = action.get("selector")
     text = action.get("text")
@@ -168,10 +172,14 @@ async def execute_type(page: Page, action: Dict[str, Any]) -> None:
 async def execute_press(page: Page, action: Dict[str, Any]) -> None:
     """
     Press a key.
-    
+
     Params:
-    - key: Key to press (Enter, Tab, Escape, etc.)
+    - key: Key to press (Enter, Tab, Escape, ArrowDown, etc.)
     - selector: Optional selector to focus first
+
+    Example actions:
+    - {"type": "press", "key": "Enter"}
+    - {"type": "press", "selector": "#search", "key": "Enter"}
     """
     key = action.get("key")
     if not key:

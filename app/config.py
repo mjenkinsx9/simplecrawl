@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     proxy_rotation_strategy: str = "round_robin"  # "round_robin" or "random"
     proxy_max_failures: int = 3  # Failures before cooldown
     proxy_cooldown_seconds: int = 300  # 5 minutes cooldown
+
+    # FlareSolverr settings (for Cloudflare bypass)
+    flaresolverr_url: Optional[str] = None  # e.g., "http://flaresolverr:8191/v1"
+    flaresolverr_timeout: int = 60000  # Timeout in milliseconds
+    flaresolverr_auto_fallback: bool = True  # Auto-retry with FlareSolverr on Cloudflare detection
     
     # Scraping limits
     max_crawl_depth: int = 50

@@ -43,6 +43,10 @@ class ScrapeRequest(BaseModel):
         le=MAX_TIMEOUT_MS,
         description=f"Timeout in milliseconds (1000-{MAX_TIMEOUT_MS})"
     )
+    headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Custom HTTP headers (e.g., Authorization, Cookie) for authenticated requests"
+    )
 
     @field_validator("wait_until")
     @classmethod
@@ -90,6 +94,10 @@ class CrawlRequest(BaseModel):
     exclude_patterns: Optional[List[str]] = Field(
         default=None,
         description="URL patterns to exclude (glob patterns)"
+    )
+    headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Custom HTTP headers for authenticated requests"
     )
 
 

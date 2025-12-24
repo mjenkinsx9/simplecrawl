@@ -22,7 +22,7 @@ limiter = Limiter(key_func=get_remote_address)
 async def scrape(request: Request, scrape_request: ScrapeRequest):
     """
     Scrape a single URL and return content in requested formats.
-    
+
     Supported formats:
     - `markdown`: Clean, LLM-ready markdown
     - `html`: Raw HTML content
@@ -30,7 +30,7 @@ async def scrape(request: Request, scrape_request: ScrapeRequest):
     - `links`: All URLs found on the page
     - `metadata`: Page metadata (title, description, OG tags, etc.)
     - `media`: Downloaded media files (images)
-    
+
     Example:
     ```json
     {
@@ -38,6 +38,18 @@ async def scrape(request: Request, scrape_request: ScrapeRequest):
       "formats": ["markdown", "metadata"],
       "exclude_tags": ["nav", "footer"],
       "timeout": 30000
+    }
+    ```
+
+    Example with authentication headers:
+    ```json
+    {
+      "url": "https://protected-site.com/dashboard",
+      "formats": ["markdown"],
+      "headers": {
+        "Authorization": "Bearer your-token-here",
+        "Cookie": "session=abc123"
+      }
     }
     ```
     """
@@ -51,7 +63,8 @@ async def scrape(request: Request, scrape_request: ScrapeRequest):
             wait_for_selector=scrape_request.wait_for_selector,
             timeout=scrape_request.timeout,
             actions=scrape_request.actions,
-            wait_until=scrape_request.wait_until
+            wait_until=scrape_request.wait_until,
+            headers=scrape_request.headers
         )
 
         return ScrapeResponse(

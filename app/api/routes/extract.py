@@ -16,16 +16,16 @@ router = APIRouter()
 @router.post("/extract", response_model=ExtractResponse)
 async def extract(request: ExtractRequest):
     """
-    Extract structured data from URLs using AI.
-    
+    Extract structured data from URLs using AI (Firecrawl-compatible).
+
     Requires either `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to be configured.
-    
+
     You can provide either:
-    - `schema`: A JSON schema defining the structure to extract
+    - `schema`: A JSON Schema defining the structure to extract (with validation)
     - `prompt`: A natural language description of what to extract
     - Both: For more precise extraction
-    
-    Example with schema:
+
+    Example with schema (recommended):
     ```json
     {
       "urls": ["https://example.com/product"],
@@ -35,11 +35,24 @@ async def extract(request: ExtractRequest):
           "productName": {"type": "string"},
           "price": {"type": "number"},
           "inStock": {"type": "boolean"}
-        }
+        },
+        "required": ["productName", "price"]
       }
     }
     ```
-    
+
+    Response includes validation result:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "data": {"productName": "Widget", "price": 29.99, "inStock": true},
+        "sources": ["https://example.com/product"],
+        "validation": {"valid": true, "error": null}
+      }
+    }
+    ```
+
     Example with prompt:
     ```json
     {

@@ -25,8 +25,11 @@ services:
       # - PROXY_ROTATION_STRATEGY=round_robin
       # - PROXY_MAX_FAILURES=3
       # - PROXY_COOLDOWN_SECONDS=300
+      # FlareSolverr for Cloudflare bypass
+      - FLARESOLVERR_URL=http://flaresolverr:8191/v1
     depends_on:
       - redis
+      - flaresolverr
     volumes:
       - ./app:/app/app
       - ./data:/app/data
@@ -56,8 +59,11 @@ services:
       # - PROXY_ROTATION_STRATEGY=round_robin
       # - PROXY_MAX_FAILURES=3
       # - PROXY_COOLDOWN_SECONDS=300
+      # FlareSolverr for Cloudflare bypass
+      - FLARESOLVERR_URL=http://flaresolverr:8191/v1
     depends_on:
       - redis
+      - flaresolverr
     volumes:
       - ./app:/app/app
       - ./data:/app/data
@@ -96,6 +102,20 @@ services:
       - redis-data:/data
     restart: unless-stopped
     command: redis-server --appendonly yes
+
+  # FlareSolverr for Cloudflare bypass
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: simplecrawl-flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - TZ=UTC
+      - CAPTCHA_SOLVER=none
+      - BROWSER_TIMEOUT=60000
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
 
 volumes:
   redis-data:

@@ -38,6 +38,9 @@ data/
 # Media files
 media/
 
+# Output files
+output/
+
 # IDE
 .vscode/
 .idea/

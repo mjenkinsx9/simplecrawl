@@ -22,12 +22,12 @@ router = APIRouter()
 async def start_crawl(request: CrawlRequest):
     """
     Start an async crawl job for a website.
-    
+
     This endpoint:
     1. Creates a crawl job in the database
     2. Submits the job to Celery for async processing
     3. Returns a job ID for status checking
-    
+
     Example:
     ```json
     {
@@ -42,7 +42,19 @@ async def start_crawl(request: CrawlRequest):
       "exclude_patterns": ["*/admin/*"]
     }
     ```
-    
+
+    Example with authentication headers:
+    ```json
+    {
+      "url": "https://protected-site.com",
+      "limit": 50,
+      "headers": {
+        "Authorization": "Bearer your-token-here",
+        "Cookie": "session=abc123"
+      }
+    }
+    ```
+
     Returns a job ID that can be used with `GET /v1/crawl/{job_id}` to check status.
     """
     try:
@@ -65,14 +77,15 @@ async def start_crawl(request: CrawlRequest):
                 "depth": request.depth,
                 "scrape_options": request.scrape_options or {},
                 "include_patterns": request.include_patterns or [],
-                "exclude_patterns": request.exclude_patterns or []
+                "exclude_patterns": request.exclude_patterns or [],
+                "headers": request.headers
             },
             created_at=datetime.utcnow()
         )
         db.add(job)
         db.commit()
         db.close()
-        
+
         # Submit to Celery
         crawl_task.delay(
             job_id,
@@ -82,7 +95,8 @@ async def start_crawl(request: CrawlRequest):
                 "depth": request.depth,
                 "scrape_options": request.scrape_options or {},
                 "include_patterns": request.include_patterns or [],
-                "exclude_patterns": request.exclude_patterns or []
+                "exclude_patterns": request.exclude_patterns or [],
+                "headers": request.headers
             }
         )
         

@@ -1,3 +1,63 @@
+# Media Extraction & Image Download System
+
+This document explains how SimpleCrawl extracts and downloads images from web pages during scraping operations.
+
+## Overview
+
+The media extraction system is designed to comprehensively discover and download images from modern web pages. It handles various image embedding techniques including:
+
+- Standard `<img>` tags
+- Responsive images with `srcset`
+- Lazy-loaded images (`data-src`, `data-lazy-src`)
+- Next.js optimized images (`/_next/image?url=...`)
+- `<picture>` and `<source>` elements
+- Video poster images
+- CSS background images (inline and `<style>` blocks)
+
+## Architecture
+
+### Flow
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  scraper.py     │────▶│  media.py        │────▶│  File System    │
+│  (triggers)     │     │  (extract/save)  │     │  (storage)      │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+```
+
+1. **Trigger**: When `"media"` is in the requested formats, `scraper.py` calls `extract_media()`
+2. **Discovery**: `extract_media()` parses HTML and finds all image URLs
+3. **Filtering**: URLs are filtered by supported file extensions
+4. **Download**: Each image is downloaded via async HTTP client
+5. **Storage**: Images are saved with sanitized, unique filenames
+
+### Entry Point
+
+Located in `app/core/scraper.py` at line 180-184:
+
+```python
+# Extract media
+if "media" in formats:
+    import os
+    job_media_dir = os.path.join(settings.media_storage_dir, "scrape")
+    result["media"] = await extract_media(page, url, job_media_dir)
+```
+
+## Configuration
+
+Settings in `app/config.py`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `media_storage_dir` | `/app/media` | Base directory for saved media |
+| `media_formats` | `jpeg,jpg,png,gif,webp,avif,svg` | Supported image formats |
+| `max_media_size_mb` | `50` | Maximum file size to download |
+
+## Complete Source Code
+
+### File: `app/utils/media.py`
+
+```python
 """
 Media extraction and downloading utilities.
 
@@ -185,20 +245,20 @@ async def extract_media(page: Page, base_url: str, storage_dir: str) -> List[Dic
             filtered_urls.append(url)
 
     logger.info("media_urls_found", total=len(media_urls_list), filtered=len(filtered_urls))
-    
+
     # Download media files
     media_items = []
     os.makedirs(storage_dir, exist_ok=True)
-    
+
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        for url in filtered_urls[:50]:  # Limit to 50 files
+        for url in filtered_urls[:50]:  # Limit to 50 files per page
             try:
                 media_info = await download_media(client, url, storage_dir)
                 if media_info:
                     media_items.append(media_info)
             except Exception as e:
                 logger.warning("media_download_failed", url=url, error=str(e))
-    
+
     logger.info("media_extraction_completed", count=len(media_items))
     return media_items
 
@@ -383,37 +443,37 @@ async def download_media(client: httpx.AsyncClient, url: str, storage_dir: str) 
 def get_file_extension(url: str) -> Optional[str]:
     """
     Get file extension from URL.
-    
+
     Args:
         url: File URL
-    
+
     Returns:
         File extension without dot, or None
     """
     parsed = urlparse(url)
     path = parsed.path
-    
+
     # Remove query parameters
     if '?' in path:
         path = path.split('?')[0]
-    
+
     # Get extension
     if '.' in path:
         ext = path.rsplit('.', 1)[-1].lower()
         # Remove any trailing slashes
         ext = ext.rstrip('/')
         return ext if ext else None
-    
+
     return None
 
 
 def guess_extension(mime_type: str) -> Optional[str]:
     """
     Guess file extension from MIME type.
-    
+
     Args:
         mime_type: MIME type
-    
+
     Returns:
         File extension without dot, or None
     """
@@ -425,5 +485,118 @@ def guess_extension(mime_type: str) -> Optional[str]:
         'image/avif': 'avif',
         'image/svg+xml': 'svg'
     }
-    
+
     return mime_map.get(mime_type.lower())
+```
+
+## Function Reference
+
+### Core Functions
+
+| Function | Purpose |
+|----------|---------|
+| `extract_media()` | Main entry point - discovers and downloads all images from a page |
+| `download_media()` | Downloads a single image file with proper error handling |
+| `extract_nextjs_image_url()` | Unwraps Next.js optimized image URLs to get originals |
+| `extract_srcset_urls()` | Parses responsive image `srcset` attributes |
+
+### Helper Functions
+
+| Function | Purpose |
+|----------|---------|
+| `extract_original_filename()` | Gets filename from URL path |
+| `sanitize_filename()` | Makes filenames filesystem-safe |
+| `get_unique_filepath()` | Prevents filename collisions with counter suffix |
+| `get_file_extension()` | Extracts extension from URL |
+| `guess_extension()` | Maps MIME type to file extension |
+
+## Image Discovery Sources
+
+The system looks for images in these locations:
+
+### 1. Standard `<img>` Tags
+```html
+<img src="/images/photo.jpg">
+```
+
+### 2. Lazy-Loaded Images
+```html
+<img data-src="/images/photo.jpg" src="placeholder.gif">
+<img data-lazy-src="/images/photo.jpg">
+<img data-original="/images/photo.jpg">
+```
+
+### 3. Responsive Images (srcset)
+```html
+<img srcset="/small.jpg 100w, /medium.jpg 500w, /large.jpg 1000w">
+<img data-srcset="/small.jpg 1x, /large.jpg 2x">
+```
+
+### 4. Picture Elements
+```html
+<picture>
+  <source srcset="/photo.webp" type="image/webp">
+  <source srcset="/photo.jpg" type="image/jpeg">
+  <img src="/photo.jpg">
+</picture>
+```
+
+### 5. Next.js Optimized Images
+```html
+<img src="/_next/image?url=%2Fimages%2Fphoto.jpg&w=1200&q=75">
+```
+The system extracts the original `/images/photo.jpg` URL.
+
+### 6. Video Poster Images
+```html
+<video poster="/thumbnail.jpg">...</video>
+```
+
+### 7. CSS Background Images
+```html
+<div style="background-image: url('/images/bg.jpg')">
+```
+
+```html
+<style>
+  .hero { background-image: url('/images/hero.jpg'); }
+</style>
+```
+
+## Security Features
+
+1. **Path Traversal Prevention**: Filenames are sanitized to remove `..`, `/`, and `\`
+2. **Directory Containment**: Final paths are validated to be within the storage directory
+3. **Size Limits**: Files larger than `max_media_size_mb` are rejected
+4. **Safe Characters Only**: Filenames are stripped of unsafe characters
+
+## Limits
+
+| Limit | Value | Location |
+|-------|-------|----------|
+| Images per page | 50 | `extract_media()` line 194 |
+| Max file size | 50 MB | `settings.max_media_size_mb` |
+| Filename length | 200 chars | `sanitize_filename()` |
+| Duplicate counter | 1000 | `get_unique_filepath()` |
+
+## Output Format
+
+Each downloaded image returns metadata:
+
+```python
+{
+    "url": "https://example.com/images/photo.jpg",
+    "filename": "photo.jpg",           # Final saved filename
+    "original_name": "photo.jpg",      # Original from URL
+    "type": "image/jpeg",              # MIME type
+    "size": 123456                     # Bytes
+}
+```
+
+## Storage Location
+
+Images are saved to:
+- **Docker**: `/app/media/scrape/` (mounted to `./media/scrape/` on host)
+- **Configurable**: Via `MEDIA_STORAGE_DIR` environment variable
+
+All images from all pages go to the same directory. Duplicate filenames get counter suffixes (`photo_1.jpg`, `photo_2.jpg`, etc.).

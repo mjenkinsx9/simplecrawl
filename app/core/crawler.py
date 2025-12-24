@@ -17,6 +17,53 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Bot challenge and junk content indicators
+JUNK_CONTENT_PATTERNS = [
+    "Enable JavaScript and cookies to continue",
+    "Just a moment...",
+    "Checking your browser",
+    "Verifying you are human",  # Cloudflare Turnstile
+    "needs to review the security of your connection",  # Cloudflare
+    "Please enable cookies",
+    "Please turn JavaScript on",
+    "Access denied",
+    "Error 1005",  # Cloudflare
+    "Error 1006",  # Cloudflare
+    "Error 1015",  # Cloudflare rate limit
+    "Attention Required! | Cloudflare",
+    "Ray ID:",  # Cloudflare error pages
+]
+
+# Minimum content length (characters) to be considered valid
+MIN_CONTENT_LENGTH = 50
+
+
+def is_valid_content(data: Dict[str, Any]) -> tuple[bool, str]:
+    """
+    Check if scraped content is valid (not a bot challenge or empty page).
+
+    Args:
+        data: Scraped page data containing markdown/text content
+
+    Returns:
+        Tuple of (is_valid, reason) - reason explains why content was rejected
+    """
+    # Get the content to check (prefer markdown, fall back to text)
+    content = data.get("markdown", "") or data.get("text", "") or ""
+
+    # Check for junk content patterns
+    for pattern in JUNK_CONTENT_PATTERNS:
+        if pattern.lower() in content.lower():
+            return False, f"Bot challenge detected: '{pattern}'"
+
+    # Check minimum content length
+    # Strip whitespace and common boilerplate for accurate length
+    clean_content = content.strip()
+    if len(clean_content) < MIN_CONTENT_LENGTH:
+        return False, f"Content too short ({len(clean_content)} chars < {MIN_CONTENT_LENGTH})"
+
+    return True, ""
+
 
 def crawl_website(job_id: str, url: str, config: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -61,6 +108,7 @@ async def _crawl_async(job_id: str, start_url: str, config: Dict[str, Any]) -> L
     scrape_options = config.get("scrape_options", {})
     include_patterns = config.get("include_patterns", [])
     exclude_patterns = config.get("exclude_patterns", [])
+    headers = config.get("headers")  # Custom HTTP headers for auth
     
     # Parse base domain
     parsed_url = urlparse(start_url)
@@ -98,24 +146,31 @@ async def _crawl_async(job_id: str, start_url: str, config: Dict[str, Any]) -> L
             # Scrape the page
             formats = scrape_options.get("formats", ["markdown", "metadata"])
             exclude_tags = scrape_options.get("exclude_tags")
-            
-            data = await scrape_url(current_url, formats, exclude_tags)
-            
-            # Add to results
-            results.append({
-                "url": current_url,
-                "depth": current_depth,
-                **data
-            })
-            
-            # Update job progress
-            update_job_status(
-                db, job_id, "running",
-                total=len(to_visit) + len(results),
-                completed=len(results)
-            )
-            
-            # Extract links for next level
+
+            data = await scrape_url(current_url, formats, exclude_tags, headers=headers)
+
+            # Check content quality (bot challenges, empty pages, etc.)
+            is_valid, reject_reason = is_valid_content(data)
+
+            if is_valid:
+                # Add to results
+                results.append({
+                    "url": current_url,
+                    "depth": current_depth,
+                    **data
+                })
+
+                # Update job progress
+                update_job_status(
+                    db, job_id, "running",
+                    total=len(to_visit) + len(results),
+                    completed=len(results)
+                )
+            else:
+                # Log why the page was skipped
+                logger.info("page_skipped_junk_content", url=current_url, reason=reject_reason)
+
+            # Extract links for next level (even from skipped pages - they may link to valid content)
             if current_depth < depth and "links" in data:
                 for link in data["links"]:
                     # Only crawl same domain
